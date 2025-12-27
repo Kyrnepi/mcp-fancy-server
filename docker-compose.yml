@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  fancy-mcp-server:
+    build:
+      context: .
+      platforms:
+        - linux/arm64
+    container_name: fancy-mcp-server
+    ports:
+      - "8000:8000"
+    environment:
+      # Required
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - DEVICE_IP=${DEVICE_IP:-192.168.4.1}
+
+      # Optional
+      - DEVICE_PORT=${DEVICE_PORT:-80}
+      - MCP_CONTEXT_DESCRIPTION=${MCP_CONTEXT_DESCRIPTION:-}
+      - PORT=${PORT:-8000}
+
+      # Safety
+      - MCP_SAFETY_MAX_POWER_0_100=${MCP_SAFETY_MAX_POWER_0_100:-}
+
+      # Tool descriptions (customizable)
+      - TOOL_DESC_FREEZE_LOCK=${TOOL_DESC_FREEZE_LOCK:-}
+      - TOOL_DESC_WARNING_BUZZER=${TOOL_DESC_WARNING_BUZZER:-}
+      - TOOL_DESC_PET_TRAINING=${TOOL_DESC_PET_TRAINING:-}
+      - TOOL_DESC_SLEEP_DEPRIVATION=${TOOL_DESC_SLEEP_DEPRIVATION:-}
+      - TOOL_DESC_RANDOM_MODE=${TOOL_DESC_RANDOM_MODE:-}
+      - TOOL_DESC_TIMER=${TOOL_DESC_TIMER:-}
+      - TOOL_DESC_BEEP=${TOOL_DESC_BEEP:-}
+      - TOOL_DESC_SHOCK=${TOOL_DESC_SHOCK:-}
+      - TOOL_DESC_POWER_CONTROL=${TOOL_DESC_POWER_CONTROL:-}
+      - TOOL_DESC_SEND_RAW_COMMAND=${TOOL_DESC_SEND_RAW_COMMAND:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge

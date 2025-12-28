@@ -13,9 +13,9 @@ HTTP Streamable MCP (Model Context Protocol) server for controlling PowerExchang
 
 | Tool | Description |
 |------|-------------|
-| `freeze_lock` | FREEZE LOCK (BETA) - Lock/unlock the device |
+| `freeze_lock` | FREEZE LOCK (BETA) - Activate Pet Training freeze mode (S2Z) - must stay still |
 | `warning_buzzer` | Enable/disable the warning buzzer |
-| `pet_training` | Pet Training mode (normal, fast, zone) |
+| `pet_training` | Pet Training mode (normal, fast, freeze) |
 | `sleep_deprivation` | Sleep Deprivation mode |
 | `random_mode` | Random mode - random activation |
 | `timer` | Timer mode (on/off, t1_up/t1_down, t2_up/t2_down) |
@@ -185,12 +185,13 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Function | Endpoint |
 |----------|----------|
-| Freeze Lock ON | `/loc1/1` |
-| Freeze Lock OFF | `/loc1/0` |
+| Freeze Lock ON | `/mode/S2Z` |
+| Freeze Lock OFF | `/mode/0` |
 | Buzzer ON | `/S1/1` |
 | Buzzer OFF | `/S1/0` |
-| Pet Training | `/mode/S2` |
-| Pet Training Fast | `/mode/S2F` |
+| Pet Training (normal) | `/mode/S2` |
+| Pet Training (fast) | `/mode/S2F` |
+| Pet Training (freeze) | `/mode/S2Z` |
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |
@@ -284,9 +285,9 @@ Serveur MCP (Model Context Protocol) HTTP Streamable pour contrôler les apparei
 
 | Outil | Description |
 |-------|-------------|
-| `freeze_lock` | FREEZE LOCK (BETA) - Verrouille/déverrouille le device |
+| `freeze_lock` | FREEZE LOCK (BETA) - Active le mode Pet Training freeze (S2Z) - doit rester immobile |
 | `warning_buzzer` | Active/désactive le buzzer d'avertissement |
-| `pet_training` | Mode Pet Training (normal, fast, zone) |
+| `pet_training` | Mode Pet Training (normal, fast, freeze) |
 | `sleep_deprivation` | Mode Sleep Deprivation |
 | `random_mode` | Mode Random - activation aléatoire |
 | `timer` | Mode Timer (on/off, t1_up/t1_down, t2_up/t2_down) |
@@ -456,12 +457,13 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Fonction | Endpoint |
 |----------|----------|
-| Freeze Lock ON | `/loc1/1` |
-| Freeze Lock OFF | `/loc1/0` |
+| Freeze Lock ON | `/mode/S2Z` |
+| Freeze Lock OFF | `/mode/0` |
 | Buzzer ON | `/S1/1` |
 | Buzzer OFF | `/S1/0` |
-| Pet Training | `/mode/S2` |
-| Pet Training Fast | `/mode/S2F` |
+| Pet Training (normal) | `/mode/S2` |
+| Pet Training (fast) | `/mode/S2F` |
+| Pet Training (freeze) | `/mode/S2Z` |
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |

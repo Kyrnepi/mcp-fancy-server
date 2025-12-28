@@ -29,9 +29,9 @@ class FancyControlConfig:
 
     # Default tool descriptions
     DEFAULT_DESCRIPTIONS = {
-        "freeze_lock": "FREEZE LOCK (BETA) - Lock or unlock the device. When locked, the device is frozen in current state.",
+        "freeze_lock": "FREEZE LOCK (BETA) - Activate Pet Training in freeze mode (mode 3/S2Z). When enabled, subject must stay completely still - any movement triggers a correction without warning.",
         "warning_buzzer": "Warning Buzzer - Enable or disable the warning buzzer on the device.",
-        "pet_training": "Pet Training Mode - Enable or disable pet training mode with optional speed setting.",
+        "pet_training": "Pet Training Mode - Enable or disable pet training mode with speed setting (normal, fast, or freeze).",
         "sleep_deprivation": "Sleep Deprivation Mode - Enable or disable sleep deprivation mode.",
         "random_mode": "Random Mode - Enable or disable random activation mode.",
         "timer": "Timer Mode - Enable or disable timer mode with optional duration in seconds.",
@@ -135,14 +135,14 @@ class FancyControlAPIClient:
             logger.error(f"Unexpected error: {str(e)}")
             return {"success": False, "error": str(e), "endpoint": endpoint}
 
-    # === FREEZE LOCK Control ===
+    # === FREEZE LOCK Control (Pet Training Mode 3) ===
     async def freeze_lock_on(self) -> dict[str, Any]:
-        """Enable FREEZE LOCK - locks the device"""
-        return await self.send_get_command("/loc1/1")
+        """Enable FREEZE LOCK - activates Pet Training in freeze mode (S2Z)"""
+        return await self.send_get_command("/mode/S2Z")
 
     async def freeze_lock_off(self) -> dict[str, Any]:
-        """Disable FREEZE LOCK - unlocks the device"""
-        return await self.send_get_command("/loc1/0")
+        """Disable FREEZE LOCK - disables Pet Training mode"""
+        return await self.send_get_command("/mode/0")
 
     # === Warning Buzzer Control ===
     async def warning_buzzer_on(self) -> dict[str, Any]:
@@ -158,7 +158,7 @@ class FancyControlAPIClient:
         """Enable Pet Training mode"""
         if mode == "fast":
             return await self.send_get_command("/mode/S2F")
-        elif mode == "zone":
+        elif mode == "freeze":
             return await self.send_get_command("/mode/S2Z")
         else:
             return await self.send_get_command("/mode/S2")
@@ -443,8 +443,8 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             },
                             "mode": {
                                 "type": "string",
-                                "description": "Training mode: 'normal', 'fast', or 'zone' (only used when action is 'on')",
-                                "enum": ["normal", "fast", "zone"],
+                                "description": "Training mode: 'normal' (S2), 'fast' (S2F), or 'freeze' (S2Z - stay still, no warning). Only used when action is 'on'.",
+                                "enum": ["normal", "fast", "freeze"],
                                 "default": "normal"
                             }
                         },
@@ -742,8 +742,9 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
         elif uri == "fancy://info/endpoints":
             endpoints_info = {
                 "freeze_lock": {
-                    "on": "/loc1/1",
-                    "off": "/loc1/0"
+                    "on": "/mode/S2Z",
+                    "off": "/mode/0",
+                    "note": "Freeze Lock activates Pet Training mode 3 (S2Z) - stay still, no warning"
                 },
                 "warning_buzzer": {
                     "on": "/S1/1",
@@ -752,7 +753,7 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
                 "pet_training": {
                     "normal": "/mode/S2",
                     "fast": "/mode/S2F",
-                    "zone": "/mode/S2Z",
+                    "freeze": "/mode/S2Z",
                     "off": "/mode/0"
                 },
                 "sleep_deprivation": {

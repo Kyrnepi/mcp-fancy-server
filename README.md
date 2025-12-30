@@ -13,9 +13,10 @@ HTTP Streamable MCP (Model Context Protocol) server for controlling PowerExchang
 
 | Tool | Description |
 |------|-------------|
-| `freeze_lock` | FREEZE LOCK (BETA) - Activate Pet Training freeze mode (S2Z) - must stay still |
+| `pet_training_freeze` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode (S2Z) - must stay still |
+| `pet_training_fast` | PET TRAINING FAST - Activate Pet Training fast mode (S2F) - faster response |
 | `warning_buzzer` | Enable/disable the warning buzzer |
-| `pet_training` | Pet Training mode (normal, fast, freeze) |
+| `pet_training` | Pet Training mode (normal/S2) |
 | `sleep_deprivation` | Sleep Deprivation mode |
 | `random_mode` | Random mode - random activation |
 | `timer` | Timer mode (on/off, t1_up/t1_down, t2_up/t2_down) |
@@ -95,7 +96,8 @@ Each tool has its own variable to customize its description:
 
 | Variable | Default Description |
 |----------|---------------------|
-| `TOOL_DESC_FREEZE_LOCK` | FREEZE LOCK (BETA) - Lock or unlock the device... |
+| `TOOL_DESC_PET_TRAINING_FREEZE` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode... |
+| `TOOL_DESC_PET_TRAINING_FAST` | PET TRAINING FAST - Activate Pet Training fast mode... |
 | `TOOL_DESC_WARNING_BUZZER` | Warning Buzzer - Enable or disable the warning buzzer... |
 | `TOOL_DESC_PET_TRAINING` | Pet Training Mode - Enable or disable pet training... |
 | `TOOL_DESC_SLEEP_DEPRIVATION` | Sleep Deprivation Mode - Enable or disable... |
@@ -157,12 +159,12 @@ curl -X POST http://192.168.1.100:8000/mcp \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "shock", "arguments": {"power": 50}}}'
 ```
 
-#### Enable Freeze Lock
+#### Enable Pet Training Freeze
 ```bash
 curl -X POST http://192.168.1.100:8000/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: your-token" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "freeze_lock", "arguments": {"action": "on"}}}'
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "pet_training_freeze", "arguments": {"action": "on"}}}'
 ```
 
 #### Enable Timer Mode
@@ -185,13 +187,13 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Function | Endpoint |
 |----------|----------|
-| Freeze Lock ON | `/mode/S2Z` |
-| Freeze Lock OFF | `/mode/0` |
+| Pet Training Freeze ON | `/mode/S2Z` |
+| Pet Training Freeze OFF | `/mode/0` |
+| Pet Training Fast ON | `/mode/S2F` |
+| Pet Training Fast OFF | `/mode/0` |
 | Buzzer ON | `/S1/1` |
 | Buzzer OFF | `/S1/0` |
-| Pet Training (normal) | `/mode/S2` |
-| Pet Training (fast) | `/mode/S2F` |
-| Pet Training (freeze) | `/mode/S2Z` |
+| Pet Training | `/mode/S2` |
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |
@@ -234,7 +236,8 @@ docker run -d \
   -e DEVICE_PORT=80 \
   -e MCP_CONTEXT_DESCRIPTION="My Device" \
   -e MCP_SAFETY_MAX_POWER_0_100=50 \
-  -e TOOL_DESC_FREEZE_LOCK="Device lock" \
+  -e TOOL_DESC_PET_TRAINING_FREEZE="Freeze training mode" \
+  -e TOOL_DESC_PET_TRAINING_FAST="Fast training mode" \
   -e TOOL_DESC_WARNING_BUZZER="Warning buzzer" \
   -e TOOL_DESC_PET_TRAINING="Training mode" \
   -e TOOL_DESC_SLEEP_DEPRIVATION="Sleep deprivation mode" \
@@ -285,9 +288,10 @@ Serveur MCP (Model Context Protocol) HTTP Streamable pour contrôler les apparei
 
 | Outil | Description |
 |-------|-------------|
-| `freeze_lock` | FREEZE LOCK (BETA) - Active le mode Pet Training freeze (S2Z) - doit rester immobile |
+| `pet_training_freeze` | PET TRAINING FREEZE (BETA) - Active le mode Pet Training freeze (S2Z) - doit rester immobile |
+| `pet_training_fast` | PET TRAINING FAST - Active le mode Pet Training rapide (S2F) - réponse plus rapide |
 | `warning_buzzer` | Active/désactive le buzzer d'avertissement |
-| `pet_training` | Mode Pet Training (normal, fast, freeze) |
+| `pet_training` | Mode Pet Training (normal/S2) |
 | `sleep_deprivation` | Mode Sleep Deprivation |
 | `random_mode` | Mode Random - activation aléatoire |
 | `timer` | Mode Timer (on/off, t1_up/t1_down, t2_up/t2_down) |
@@ -367,7 +371,8 @@ Chaque outil a sa propre variable pour personnaliser sa description :
 
 | Variable | Description par défaut |
 |----------|------------------------|
-| `TOOL_DESC_FREEZE_LOCK` | FREEZE LOCK (BETA) - Lock or unlock the device... |
+| `TOOL_DESC_PET_TRAINING_FREEZE` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode... |
+| `TOOL_DESC_PET_TRAINING_FAST` | PET TRAINING FAST - Activate Pet Training fast mode... |
 | `TOOL_DESC_WARNING_BUZZER` | Warning Buzzer - Enable or disable the warning buzzer... |
 | `TOOL_DESC_PET_TRAINING` | Pet Training Mode - Enable or disable pet training... |
 | `TOOL_DESC_SLEEP_DEPRIVATION` | Sleep Deprivation Mode - Enable or disable... |
@@ -429,12 +434,12 @@ curl -X POST http://192.168.1.100:8000/mcp \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "shock", "arguments": {"power": 50}}}'
 ```
 
-#### Activer Freeze Lock
+#### Activer Pet Training Freeze
 ```bash
 curl -X POST http://192.168.1.100:8000/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: votre-token" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "freeze_lock", "arguments": {"action": "on"}}}'
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "pet_training_freeze", "arguments": {"action": "on"}}}'
 ```
 
 #### Activer le mode Timer
@@ -457,13 +462,13 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Fonction | Endpoint |
 |----------|----------|
-| Freeze Lock ON | `/mode/S2Z` |
-| Freeze Lock OFF | `/mode/0` |
+| Pet Training Freeze ON | `/mode/S2Z` |
+| Pet Training Freeze OFF | `/mode/0` |
+| Pet Training Fast ON | `/mode/S2F` |
+| Pet Training Fast OFF | `/mode/0` |
 | Buzzer ON | `/S1/1` |
 | Buzzer OFF | `/S1/0` |
-| Pet Training (normal) | `/mode/S2` |
-| Pet Training (fast) | `/mode/S2F` |
-| Pet Training (freeze) | `/mode/S2Z` |
+| Pet Training | `/mode/S2` |
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |
@@ -506,7 +511,8 @@ docker run -d \
   -e DEVICE_PORT=80 \
   -e MCP_CONTEXT_DESCRIPTION="Mon Device" \
   -e MCP_SAFETY_MAX_POWER_0_100=50 \
-  -e TOOL_DESC_FREEZE_LOCK="Verrouillage du device" \
+  -e TOOL_DESC_PET_TRAINING_FREEZE="Mode dressage freeze" \
+  -e TOOL_DESC_PET_TRAINING_FAST="Mode dressage rapide" \
   -e TOOL_DESC_WARNING_BUZZER="Buzzer d'avertissement" \
   -e TOOL_DESC_PET_TRAINING="Mode dressage" \
   -e TOOL_DESC_SLEEP_DEPRIVATION="Mode privation de sommeil" \

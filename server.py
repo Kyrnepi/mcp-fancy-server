@@ -29,12 +29,13 @@ class FancyControlConfig:
 
     # Default tool descriptions
     DEFAULT_DESCRIPTIONS = {
-        "freeze_lock": "FREEZE LOCK (BETA) - Activate Pet Training in freeze mode (mode 3/S2Z). When enabled, subject must stay completely still - any movement triggers a correction without warning.",
+        "pet_training_freeze": "PET TRAINING FREEZE (BETA) - Activate Pet Training in freeze mode (mode 3/S2Z). When enabled, subject must stay completely still - any movement triggers a correction without warning.",
+        "pet_training_fast": "PET TRAINING FAST - Activate Pet Training in fast mode (mode 2/S2F). Faster response time for training corrections.",
         "warning_buzzer": "Warning Buzzer - Enable or disable the warning buzzer on the device.",
-        "pet_training": "Pet Training Mode - Enable or disable pet training mode with speed setting (normal, fast, or freeze).",
+        "pet_training": "Pet Training Mode - Enable or disable pet training mode (normal/S2). Use pet_training_fast or pet_training_freeze for other modes.",
         "sleep_deprivation": "Sleep Deprivation Mode - Enable or disable sleep deprivation mode.",
         "random_mode": "Random Mode - Enable or disable random activation mode.",
-        "timer": "Timer Mode - Enable or disable timer mode with optional duration in seconds.",
+        "timer": "Timer Mode - Enable or disable timer mode. Use t1_up/t1_down and t2_up/t2_down to adjust duration.",
         "beep": "Beep - Send a beep signal to the device (equivalent to short button press).",
         "shock": "Shock - Send a shock signal with specified power level (equivalent to long button press).",
         "power_control": "Power Control - Adjust the device power level.",
@@ -135,13 +136,22 @@ class FancyControlAPIClient:
             logger.error(f"Unexpected error: {str(e)}")
             return {"success": False, "error": str(e), "endpoint": endpoint}
 
-    # === FREEZE LOCK Control (Pet Training Mode 3) ===
-    async def freeze_lock_on(self) -> dict[str, Any]:
-        """Enable FREEZE LOCK - activates Pet Training in freeze mode (S2Z)"""
+    # === PET TRAINING FREEZE Control (Pet Training Mode 3) ===
+    async def pet_training_freeze_on(self) -> dict[str, Any]:
+        """Enable PET TRAINING FREEZE - activates Pet Training in freeze mode (S2Z)"""
         return await self.send_get_command("/mode/S2Z")
 
-    async def freeze_lock_off(self) -> dict[str, Any]:
-        """Disable FREEZE LOCK - disables Pet Training mode"""
+    async def pet_training_freeze_off(self) -> dict[str, Any]:
+        """Disable PET TRAINING FREEZE - disables Pet Training mode"""
+        return await self.send_get_command("/mode/0")
+
+    # === PET TRAINING FAST Control (Pet Training Mode 2) ===
+    async def pet_training_fast_on(self) -> dict[str, Any]:
+        """Enable PET TRAINING FAST - activates Pet Training in fast mode (S2F)"""
+        return await self.send_get_command("/mode/S2F")
+
+    async def pet_training_fast_off(self) -> dict[str, Any]:
+        """Disable PET TRAINING FAST - disables Pet Training mode"""
         return await self.send_get_command("/mode/0")
 
     # === Warning Buzzer Control ===
@@ -153,15 +163,10 @@ class FancyControlAPIClient:
         """Disable warning buzzer"""
         return await self.send_get_command("/S1/0")
 
-    # === Pet Training Mode ===
-    async def pet_training_on(self, mode: str = "normal") -> dict[str, Any]:
-        """Enable Pet Training mode"""
-        if mode == "fast":
-            return await self.send_get_command("/mode/S2F")
-        elif mode == "freeze":
-            return await self.send_get_command("/mode/S2Z")
-        else:
-            return await self.send_get_command("/mode/S2")
+    # === Pet Training Mode (Normal/S2) ===
+    async def pet_training_on(self) -> dict[str, Any]:
+        """Enable Pet Training mode (normal/S2)"""
+        return await self.send_get_command("/mode/S2")
 
     async def pet_training_off(self) -> dict[str, Any]:
         """Disable Pet Training mode"""
@@ -237,10 +242,9 @@ class FancyControlAPIClient:
 
     async def set_power(self, target_power: int) -> dict[str, Any]:
         """Set power to a specific level (0-100), respecting safety max power limit"""
-        original_target = target_power
         target_power = max(0, min(100, target_power))
 
-        # Apply safety max power limit if configured
+        # Apply safety max power limit if configured (silent)
         if self.config.max_power is not None:
             target_power = min(target_power, self.config.max_power)
 
@@ -265,24 +269,17 @@ class FancyControlAPIClient:
                 await asyncio.sleep(0.1)
 
         self.current_power = target_power
-        data = {"power_level": target_power, "steps": len(results)}
-
-        # Add info if power was limited by safety setting
-        if self.config.max_power is not None and original_target > target_power:
-            data["power_limited_from"] = original_target
-            data["safety_max_power"] = self.config.max_power
 
         return {
             "success": True,
-            "data": data,
+            "data": {"power_level": target_power, "steps": len(results)},
             "endpoint": f"power_set_{target_power}"
         }
 
     # === Combined Shock with Power ===
     async def shock_with_power(self, power: int) -> dict[str, Any]:
         """Send shock at specific power level, respecting safety max power limit"""
-        # Apply safety max power limit if configured
-        original_power = power
+        # Apply safety max power limit if configured (silent)
         if self.config.max_power is not None:
             power = min(power, self.config.max_power)
 
@@ -293,19 +290,14 @@ class FancyControlAPIClient:
 
         # Then send the shock
         shock_result = await self.shock()
-        data = {
-            "power_level": power,
-            "shock_sent": shock_result["success"],
-            "shock_response": shock_result.get("data", {})
-        }
-        # Add info if power was limited by safety setting
-        if self.config.max_power is not None and original_power > power:
-            data["power_limited_from"] = original_power
-            data["safety_max_power"] = self.config.max_power
 
         return {
             "success": shock_result["success"],
-            "data": data,
+            "data": {
+                "power_level": power,
+                "shock_sent": shock_result["success"],
+                "shock_response": shock_result.get("data", {})
+            },
             "endpoint": f"shock_power_{power}"
         }
 
@@ -401,14 +393,29 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
         "result": {
             "tools": [
                 {
-                    "name": "freeze_lock",
-                    "description": config.get_tool_description("freeze_lock"),
+                    "name": "pet_training_freeze",
+                    "description": config.get_tool_description("pet_training_freeze"),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "description": "Action: 'on' to lock/freeze, 'off' to unlock",
+                                "description": "Action: 'on' to enable freeze training mode, 'off' to disable",
+                                "enum": ["on", "off"]
+                            }
+                        },
+                        "required": ["action"]
+                    }
+                },
+                {
+                    "name": "pet_training_fast",
+                    "description": config.get_tool_description("pet_training_fast"),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "description": "Action: 'on' to enable fast training mode, 'off' to disable",
                                 "enum": ["on", "off"]
                             }
                         },
@@ -438,14 +445,8 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "description": "Action: 'on' to enable, 'off' to disable",
+                                "description": "Action: 'on' to enable normal pet training (S2), 'off' to disable",
                                 "enum": ["on", "off"]
-                            },
-                            "mode": {
-                                "type": "string",
-                                "description": "Training mode: 'normal' (S2), 'fast' (S2F), or 'freeze' (S2Z - stay still, no warning). Only used when action is 'on'.",
-                                "enum": ["normal", "fast", "freeze"],
-                                "default": "normal"
                             }
                         },
                         "required": ["action"]
@@ -568,12 +569,19 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
     try:
         result = None
 
-        if tool_name == "freeze_lock":
+        if tool_name == "pet_training_freeze":
             action = arguments.get("action", "off")
             if action == "on":
-                result = await api_client.freeze_lock_on()
+                result = await api_client.pet_training_freeze_on()
             else:
-                result = await api_client.freeze_lock_off()
+                result = await api_client.pet_training_freeze_off()
+
+        elif tool_name == "pet_training_fast":
+            action = arguments.get("action", "off")
+            if action == "on":
+                result = await api_client.pet_training_fast_on()
+            else:
+                result = await api_client.pet_training_fast_off()
 
         elif tool_name == "warning_buzzer":
             action = arguments.get("action", "off")
@@ -585,8 +593,7 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
         elif tool_name == "pet_training":
             action = arguments.get("action", "off")
             if action == "on":
-                mode = arguments.get("mode", "normal")
-                result = await api_client.pet_training_on(mode)
+                result = await api_client.pet_training_on()
             else:
                 result = await api_client.pet_training_off()
 
@@ -741,19 +748,22 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
 
         elif uri == "fancy://info/endpoints":
             endpoints_info = {
-                "freeze_lock": {
+                "pet_training_freeze": {
                     "on": "/mode/S2Z",
                     "off": "/mode/0",
-                    "note": "Freeze Lock activates Pet Training mode 3 (S2Z) - stay still, no warning"
+                    "note": "Pet Training Freeze activates mode 3 (S2Z) - stay still, no warning"
+                },
+                "pet_training_fast": {
+                    "on": "/mode/S2F",
+                    "off": "/mode/0",
+                    "note": "Pet Training Fast activates Pet Training mode 2 (S2F) - faster response"
                 },
                 "warning_buzzer": {
                     "on": "/S1/1",
                     "off": "/S1/0"
                 },
                 "pet_training": {
-                    "normal": "/mode/S2",
-                    "fast": "/mode/S2F",
-                    "freeze": "/mode/S2Z",
+                    "on": "/mode/S2",
                     "off": "/mode/0"
                 },
                 "sleep_deprivation": {
@@ -767,7 +777,10 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
                 "timer": {
                     "on": "/mode/TM",
                     "off": "/mode/0",
-                    "set_seconds": "/T1/{seconds}"
+                    "t1_up": "/T1/+",
+                    "t1_down": "/T1/-",
+                    "t2_up": "/T2/+",
+                    "t2_down": "/T2/-"
                 },
                 "beep": "/B1/1",
                 "shock": "/Z1/1",
@@ -971,7 +984,7 @@ async def root():
         "mcp_endpoint": "/mcp",
         "health_endpoint": "/health",
         "tools": [
-            "freeze_lock", "warning_buzzer", "pet_training",
+            "pet_training_freeze", "pet_training_fast", "warning_buzzer", "pet_training",
             "sleep_deprivation", "random_mode", "timer",
             "beep", "shock", "power_control", "send_raw_command"
         ]

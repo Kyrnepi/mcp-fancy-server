@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 
 # Configure logging
 logging.basicConfig(
@@ -29,16 +29,18 @@ class FancyControlConfig:
 
     # Default tool descriptions
     DEFAULT_DESCRIPTIONS = {
+        "device_config": "Device Config - Check or save device configuration (SSID, password, serial number, key).",
+        "tilt": "Tilt - Check or save the device tilt position value.",
         "pet_training_freeze": "PET TRAINING FREEZE (BETA) - Activate Pet Training in freeze mode (mode 3/S2Z). When enabled, subject must stay completely still - any movement triggers a correction without warning.",
         "pet_training_fast": "PET TRAINING FAST - Activate Pet Training in fast mode (mode 2/S2F). Faster response time for training corrections.",
         "warning_buzzer": "Warning Buzzer - Enable or disable the warning buzzer on the device.",
         "pet_training": "Pet Training Mode - Enable or disable pet training mode (normal/S2). Use pet_training_fast or pet_training_freeze for other modes.",
         "sleep_deprivation": "Sleep Deprivation Mode - Enable or disable sleep deprivation mode.",
         "random_mode": "Random Mode - Enable or disable random activation mode.",
-        "timer": "Timer Mode - Enable or disable timer mode. Use t1_up/t1_down and t2_up/t2_down to adjust duration.",
+        "timer": "Timer Mode - Control timer mode: on/off, get values, increase/decrease timer1 or timer2.",
         "beep": "Beep - Send a beep signal to the device (equivalent to short button press).",
         "shock": "Shock - Send a shock signal with specified power level (equivalent to long button press).",
-        "power_control": "Power Control - Adjust the device power level.",
+        "power_control": "Power Control - Increase or decrease the device power level. Device only supports increment/decrement, not absolute values.",
         "send_raw_command": "Send a raw HTTP command to the device. For advanced users.",
     }
 
@@ -129,6 +131,11 @@ class FancyControlAPIClient:
             logger.info(f"Command successful: {endpoint}")
             return {"success": True, "data": result, "endpoint": endpoint}
 
+        except httpx.RemoteProtocolError as e:
+            # Device disconnected without response - this is normal for some commands (like /mode/0)
+            # Treat as success since the device received the command
+            logger.info(f"Device disconnected after receiving command (normal behavior): {endpoint}")
+            return {"success": True, "data": {"response": "Command sent, device disconnected (normal)"}, "endpoint": endpoint}
         except httpx.HTTPError as e:
             logger.error(f"HTTP error: {str(e)}")
             return {"success": False, "error": str(e), "endpoint": endpoint}
@@ -199,20 +206,52 @@ class FancyControlAPIClient:
         """Disable Timer mode"""
         return await self.send_get_command("/mode/0")
 
+    async def timer_get(self) -> dict[str, Any]:
+        """Get timer values from /DIS/TM endpoint"""
+        result = await self.send_get_command("/DIS/TM")
+
+        if result["success"]:
+            response_text = result.get("data", {}).get("response", "")
+            timer_data = self._parse_timer_response(response_text)
+            result["data"] = {"timer": timer_data, "raw_response": response_text}
+
+        return result
+
+    def _parse_timer_response(self, response: str) -> dict[str, Any]:
+        """Parse timer response (format: T1/<value> or T2/<value>)"""
+        timer = {"timer1": None, "timer2": None}
+
+        if not response:
+            return timer
+
+        parts = response.strip().split("/")
+        if len(parts) >= 2:
+            command = parts[0]
+            try:
+                value = int(parts[1])
+                if command == "T1":
+                    timer["timer1"] = value
+                elif command == "T2":
+                    timer["timer2"] = value
+            except ValueError:
+                pass
+
+        return timer
+
     async def timer1_increase(self) -> dict[str, Any]:
-        """Increase timer 1 value"""
+        """Increase Timer 1 value"""
         return await self.send_get_command("/T1/+")
 
     async def timer1_decrease(self) -> dict[str, Any]:
-        """Decrease timer 1 value"""
+        """Decrease Timer 1 value"""
         return await self.send_get_command("/T1/-")
 
     async def timer2_increase(self) -> dict[str, Any]:
-        """Increase timer 2 value"""
+        """Increase Timer 2 value"""
         return await self.send_get_command("/T2/+")
 
     async def timer2_decrease(self) -> dict[str, Any]:
-        """Decrease timer 2 value"""
+        """Decrease Timer 2 value"""
         return await self.send_get_command("/T2/-")
 
     # === Beep Control (Short press) ===
@@ -226,23 +265,42 @@ class FancyControlAPIClient:
         return await self.send_get_command("/Z1/1")
 
     # === Power Control ===
+    @staticmethod
+    def _parse_pw_response(data: Any) -> Optional[int]:
+        # Device returns "PW/<int>" as text/html
+        text = data.get("response") if isinstance(data, dict) else None
+        if not isinstance(text, str):
+            return None
+        parts = text.strip().split("/")
+        if len(parts) == 2 and parts[0] == "PW":
+            try:
+                return int(parts[1])
+            except ValueError:
+                return None
+        return None
+
     async def power_increase(self) -> dict[str, Any]:
         """Increase power level"""
         result = await self.send_get_command("/PW/+")
-        if result["success"] and self.current_power < 100:
-            self.current_power = min(100, self.current_power + 5)
+        if result["success"]:
+            parsed = self._parse_pw_response(result.get("data"))
+            if parsed is not None:
+                self.current_power = parsed
         return result
 
     async def power_decrease(self) -> dict[str, Any]:
         """Decrease power level"""
         result = await self.send_get_command("/PW/-")
-        if result["success"] and self.current_power > 0:
-            self.current_power = max(0, self.current_power - 5)
+        if result["success"]:
+            parsed = self._parse_pw_response(result.get("data"))
+            if parsed is not None:
+                self.current_power = parsed
         return result
 
-    async def set_power(self, target_power: int) -> dict[str, Any]:
+    async def set_power(self, target_power: int, step: int = 5) -> dict[str, Any]:
         """Set power to a specific level (0-100), respecting safety max power limit"""
         target_power = max(0, min(100, target_power))
+        step = max(1, min(50, step))  # Ensure step is between 1 and 50
 
         # Apply safety max power limit if configured (silent)
         if self.config.max_power is not None:
@@ -250,8 +308,8 @@ class FancyControlAPIClient:
 
         results = []
 
-        # Calculate steps needed (each step is ~5%)
-        steps_needed = (target_power - self.current_power) // 5
+        # Calculate steps needed based on the step size
+        steps_needed = (target_power - self.current_power) // step
 
         if steps_needed > 0:
             for _ in range(abs(steps_needed)):
@@ -272,7 +330,7 @@ class FancyControlAPIClient:
 
         return {
             "success": True,
-            "data": {"power_level": target_power, "steps": len(results)},
+            "data": {"power_level": target_power, "steps": len(results), "step_size": step},
             "endpoint": f"power_set_{target_power}"
         }
 
@@ -300,6 +358,80 @@ class FancyControlAPIClient:
             },
             "endpoint": f"shock_power_{power}"
         }
+
+    # === Device Config ===
+    async def device_config_check(self) -> dict[str, Any]:
+        """Check device configuration (SSID, password, serial, key) from /TX? endpoint"""
+        result = await self.send_get_command("/TX?")
+
+        if result["success"]:
+            response_text = result.get("data", {}).get("response", "")
+            config_data = self._parse_device_config(response_text)
+            result["data"] = {"config": config_data, "raw_response": response_text}
+
+        return result
+
+    def _parse_device_config(self, response: str) -> dict[str, Any]:
+        """Parse device config response into structured data
+        Response format: COMMAND/SSID:value:PASSWORD:value:SERIAL:value:KEY:value
+        """
+        config = {
+            "ssid": None,
+            "password": None,
+            "serial": None,
+            "key": None
+        }
+
+        if not response:
+            return config
+
+        # Split by ":" to extract values
+        parts = response.split(":")
+
+        # Extract values based on position (indices 1, 3, 5, 7 after first split)
+        if len(parts) >= 2:
+            config["ssid"] = parts[1] if len(parts) > 1 else None
+        if len(parts) >= 4:
+            config["password"] = parts[3] if len(parts) > 3 else None
+        if len(parts) >= 6:
+            config["serial"] = parts[5] if len(parts) > 5 else None
+        if len(parts) >= 8:
+            config["key"] = parts[7] if len(parts) > 7 else None
+
+        return config
+
+    async def device_config_save(self, ssid: str, password: str) -> dict[str, Any]:
+        """Save device configuration (SSID and password)"""
+        return await self.send_get_command(f"/TX?SSIDX={ssid}&PASSX={password}")
+
+    # === Tilt ===
+    async def tilt_check(self) -> dict[str, Any]:
+        """Check device tilt position from /DIS/BOW endpoint"""
+        result = await self.send_get_command("/DIS/BOW")
+
+        if result["success"]:
+            response_text = result.get("data", {}).get("response", "")
+            tilt_value = self._parse_tilt(response_text)
+            result["data"] = {"tilt": tilt_value, "raw_response": response_text}
+
+        return result
+
+    def _parse_tilt(self, response: str) -> int | None:
+        """Parse tilt response (format: BOW/value)"""
+        if not response:
+            return None
+
+        parts = response.strip().split("/")
+        if len(parts) >= 2:
+            try:
+                return int(parts[1])
+            except ValueError:
+                return None
+        return None
+
+    async def tilt_save(self, value: int) -> dict[str, Any]:
+        """Save device tilt position value"""
+        return await self.send_get_command(f"/TX?TILTVAL={value}")
 
     # === Generic Command ===
     async def send_raw_command(self, command: str) -> dict[str, Any]:
@@ -360,28 +492,56 @@ async def verify_token(authorization: Optional[str] = Header(None)) -> bool:
     return True
 
 
-def handle_initialize(request_id: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Handle MCP initialize request"""
-    session_id = str(uuid.uuid4())
-    sessions[session_id] = {"initialized": True}
+def get_context_prefix() -> str:
+    """Return context description prefix for tool/resource/prompt descriptions"""
+    if config and config.context_description:
+        return f"[{config.context_description}] "
+    return ""
 
-    return {
+
+SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
+
+
+def handle_initialize(request_id: str, params: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Handle MCP initialize request. Returns (response, session_id, negotiated_version) tuple."""
+    session_id = str(uuid.uuid4())
+
+    # Protocol version negotiation: use client's version if supported, otherwise our latest
+    client_version = params.get("protocolVersion", SUPPORTED_PROTOCOL_VERSIONS[-1])
+    if client_version in SUPPORTED_PROTOCOL_VERSIONS:
+        negotiated_version = client_version
+    else:
+        negotiated_version = SUPPORTED_PROTOCOL_VERSIONS[-1]
+
+    sessions[session_id] = {"initialized": True, "protocol_version": negotiated_version}
+
+    response = {
         "jsonrpc": "2.0",
         "id": request_id,
         "result": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": negotiated_version,
             "capabilities": {
-                "tools": {},
-                "resources": {},
-                "prompts": {}
+                "tools": {
+                    "listChanged": False
+                },
+                "resources": {
+                    "subscribe": False,
+                    "listChanged": False
+                },
+                "prompts": {
+                    "listChanged": False
+                }
             },
             "serverInfo": {
                 "name": "fancy-control-mcp-server",
-                "version": "2.0.0"
-            }
-        },
-        "_session_id": session_id
+                "title": "Fancy Control MCP Server",
+                "version": "2.0.0",
+                "description": "MCP server for controlling PowerExchange IoT devices"
+            },
+            "instructions": "This server controls PowerExchange IoT devices. Use the available tools to manage device modes, power levels, and settings."
+        }
     }
+    return response, session_id
 
 
 def handle_tools_list(request_id: str) -> dict[str, Any]:
@@ -393,7 +553,66 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
         "result": {
             "tools": [
                 {
+                    "name": "device_config",
+                    "title": "Device Configuration",
+                    "description": config.get_tool_description("device_config"),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "description": "Action: 'check' to retrieve config, 'save' to update SSID/password",
+                                "enum": ["check", "save"]
+                            },
+                            "ssid": {
+                                "type": "string",
+                                "description": "New SSID (only used with 'save' action)"
+                            },
+                            "password": {
+                                "type": "string",
+                                "description": "New password (only used with 'save' action)"
+                            }
+                        },
+                        "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Device Configuration",
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": True
+                    }
+                },
+                {
+                    "name": "tilt",
+                    "title": "Tilt Control",
+                    "description": config.get_tool_description("tilt"),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "description": "Action: 'check' to retrieve tilt value, 'save' to set new value",
+                                "enum": ["check", "save"]
+                            },
+                            "value": {
+                                "type": "integer",
+                                "description": "Tilt position value (only used with 'save' action)"
+                            }
+                        },
+                        "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Tilt Control",
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": True
+                    }
+                },
+                {
                     "name": "pet_training_freeze",
+                    "title": "Pet Training Freeze",
                     "description": config.get_tool_description("pet_training_freeze"),
                     "inputSchema": {
                         "type": "object",
@@ -405,10 +624,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Pet Training Freeze",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "pet_training_fast",
+                    "title": "Pet Training Fast",
                     "description": config.get_tool_description("pet_training_fast"),
                     "inputSchema": {
                         "type": "object",
@@ -420,10 +647,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Pet Training Fast",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "warning_buzzer",
+                    "title": "Warning Buzzer",
                     "description": config.get_tool_description("warning_buzzer"),
                     "inputSchema": {
                         "type": "object",
@@ -435,10 +670,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Warning Buzzer",
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "pet_training",
+                    "title": "Pet Training",
                     "description": config.get_tool_description("pet_training"),
                     "inputSchema": {
                         "type": "object",
@@ -450,10 +693,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Pet Training",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "sleep_deprivation",
+                    "title": "Sleep Deprivation",
                     "description": config.get_tool_description("sleep_deprivation"),
                     "inputSchema": {
                         "type": "object",
@@ -465,10 +716,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Sleep Deprivation",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "random_mode",
+                    "title": "Random Mode",
                     "description": config.get_tool_description("random_mode"),
                     "inputSchema": {
                         "type": "object",
@@ -480,33 +739,57 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Random Mode",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "timer",
+                    "title": "Timer Control",
                     "description": config.get_tool_description("timer"),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "description": "Action: 'on' to enable timer mode, 'off' to disable, 't1_up'/'t1_down' to adjust timer 1, 't2_up'/'t2_down' to adjust timer 2",
-                                "enum": ["on", "off", "t1_up", "t1_down", "t2_up", "t2_down"]
+                                "description": "Action: 'on' to enable, 'off' to disable, 'get' to read values, 't1_up'/'t1_down' for timer1, 't2_up'/'t2_down' for timer2",
+                                "enum": ["on", "off", "get", "t1_up", "t1_down", "t2_up", "t2_down"]
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Timer Control",
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "beep",
+                    "title": "Beep",
                     "description": config.get_tool_description("beep"),
                     "inputSchema": {
                         "type": "object",
-                        "properties": {}
+                        "additionalProperties": False
+                    },
+                    "annotations": {
+                        "title": "Beep",
+                        "readOnlyHint": False,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "shock",
+                    "title": "Shock",
                     "description": config.get_tool_description("shock"),
                     "inputSchema": {
                         "type": "object",
@@ -519,10 +802,18 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                                 "default": 50
                             }
                         }
+                    },
+                    "annotations": {
+                        "title": "Shock",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": False,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "power_control",
+                    "title": "Power Control",
                     "description": config.get_tool_description("power_control"),
                     "inputSchema": {
                         "type": "object",
@@ -537,13 +828,28 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                                 "description": "Power level (0-100), only used when action is 'set'",
                                 "minimum": 0,
                                 "maximum": 100
+                            },
+                            "step": {
+                                "type": "integer",
+                                "description": "Step size for power adjustment (default: 5), only used when action is 'set'",
+                                "minimum": 1,
+                                "maximum": 50,
+                                "default": 5
                             }
                         },
                         "required": ["action"]
+                    },
+                    "annotations": {
+                        "title": "Power Control",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": False,
+                        "openWorldHint": True
                     }
                 },
                 {
                     "name": "send_raw_command",
+                    "title": "Send Raw Command",
                     "description": config.get_tool_description("send_raw_command"),
                     "inputSchema": {
                         "type": "object",
@@ -554,6 +860,13 @@ def handle_tools_list(request_id: str) -> dict[str, Any]:
                             }
                         },
                         "required": ["command"]
+                    },
+                    "annotations": {
+                        "title": "Send Raw Command",
+                        "readOnlyHint": False,
+                        "destructiveHint": True,
+                        "idempotentHint": False,
+                        "openWorldHint": True
                     }
                 }
             ]
@@ -569,7 +882,33 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
     try:
         result = None
 
-        if tool_name == "pet_training_freeze":
+        if tool_name == "device_config":
+            action = arguments.get("action", "check")
+            if action == "check":
+                result = await api_client.device_config_check()
+            elif action == "save":
+                ssid = arguments.get("ssid", "")
+                password = arguments.get("password", "")
+                if not ssid or not password:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32602,
+                            "message": "Both 'ssid' and 'password' are required for save action"
+                        }
+                    }
+                result = await api_client.device_config_save(ssid, password)
+
+        elif tool_name == "tilt":
+            action = arguments.get("action", "check")
+            if action == "check":
+                result = await api_client.tilt_check()
+            elif action == "save":
+                value = arguments.get("value", 0)
+                result = await api_client.tilt_save(value)
+
+        elif tool_name == "pet_training_freeze":
             action = arguments.get("action", "off")
             if action == "on":
                 result = await api_client.pet_training_freeze_on()
@@ -617,6 +956,8 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
                 result = await api_client.timer_on()
             elif action == "off":
                 result = await api_client.timer_off()
+            elif action == "get":
+                result = await api_client.timer_get()
             elif action == "t1_up":
                 result = await api_client.timer1_increase()
             elif action == "t1_down":
@@ -625,8 +966,6 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
                 result = await api_client.timer2_increase()
             elif action == "t2_down":
                 result = await api_client.timer2_decrease()
-            else:
-                result = await api_client.timer_off()
 
         elif tool_name == "beep":
             result = await api_client.beep()
@@ -643,7 +982,8 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
                 result = await api_client.power_decrease()
             elif action == "set":
                 level = arguments.get("level", 50)
-                result = await api_client.set_power(level)
+                step = arguments.get("step", 5)
+                result = await api_client.set_power(level, step)
 
         elif tool_name == "send_raw_command":
             command = arguments.get("command", "")
@@ -663,7 +1003,7 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {
-                    "code": -32601,
+                    "code": -32602,
                     "message": f"Unknown tool: {tool_name}"
                 }
             }
@@ -686,9 +1026,14 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {
-                    "code": -32000,
-                    "message": f"Failed to execute '{tool_name}': {error_msg}"
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Error: Failed to execute '{tool_name}': {error_msg}"
+                        }
+                    ],
+                    "isError": True
                 }
             }
 
@@ -697,9 +1042,14 @@ async def handle_tools_call(request_id: str, params: dict[str, Any]) -> dict[str
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {
-                "code": -32000,
-                "message": f"Execution error: {str(e)}"
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Error: Execution error: {str(e)}"
+                    }
+                ],
+                "isError": True
             }
         }
 
@@ -748,6 +1098,16 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
 
         elif uri == "fancy://info/endpoints":
             endpoints_info = {
+                "device_config": {
+                    "check": "/TX?",
+                    "save": "/TX?SSIDX=<ssid>&PASSX=<password>",
+                    "note": "Returns/saves device config: SSID, password, serial, key"
+                },
+                "tilt": {
+                    "check": "/DIS/BOW",
+                    "save": "/TX?TILTVAL=<value>",
+                    "note": "Returns/saves device tilt position value"
+                },
                 "pet_training_freeze": {
                     "on": "/mode/S2Z",
                     "off": "/mode/0",
@@ -777,10 +1137,12 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
                 "timer": {
                     "on": "/mode/TM",
                     "off": "/mode/0",
+                    "get": "/DIS/TM",
                     "t1_up": "/T1/+",
                     "t1_down": "/T1/-",
                     "t2_up": "/T2/+",
-                    "t2_down": "/T2/-"
+                    "t2_down": "/T2/-",
+                    "note": "get returns T1/<value> or T2/<value>"
                 },
                 "beep": "/B1/1",
                 "shock": "/Z1/1",
@@ -796,8 +1158,8 @@ async def handle_resources_read(request_id: str, params: dict[str, Any]) -> dict
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {
-                    "code": -32602,
-                    "message": f"Unknown resource URI: {uri}"
+                    "code": -32002,
+                    "message": f"Resource not found: {uri}"
                 }
             }
 
@@ -900,18 +1262,68 @@ def handle_prompts_get(request_id: str, params: dict[str, Any]) -> dict[str, Any
         }
 
 
+def validate_origin(request: Request) -> None:
+    """Validate Origin header to prevent DNS rebinding attacks (MUST per MCP 2025-11-25 spec)"""
+    origin = request.headers.get("origin")
+    if origin is not None:
+        # Allow localhost origins and absent Origin headers
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        hostname = parsed.hostname or ""
+        if hostname not in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            # Check allowed origins from environment
+            allowed_origins = os.getenv("MCP_ALLOWED_ORIGINS", "").split(",")
+            allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
+            if allowed_origins and origin not in allowed_origins:
+                logger.warning(f"Rejected request with invalid Origin: {origin}")
+                raise HTTPException(status_code=403, detail="Forbidden: invalid Origin header")
+
+
+def validate_protocol_version_header(request: Request) -> None:
+    """Validate MCP-Protocol-Version header on non-initialize requests (MUST per MCP 2025-11-25 spec)"""
+    version = request.headers.get("mcp-protocol-version")
+    if version and version not in SUPPORTED_PROTOCOL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported MCP-Protocol-Version: {version}")
+
+
+def validate_session(request: Request, require: bool = True) -> Optional[str]:
+    """Validate MCP-Session-Id header on subsequent requests (SHOULD per MCP 2025-11-25 spec)"""
+    session_id = request.headers.get("mcp-session-id")
+    if session_id:
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found or expired")
+        return session_id
+    elif require:
+        raise HTTPException(status_code=400, detail="Missing MCP-Session-Id header")
+    return None
+
+
 @app.post("/mcp")
 async def mcp_endpoint(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization")
 ):
-    """Main MCP endpoint with streaming support"""
+    """Main MCP endpoint - POST handler for JSON-RPC messages"""
     await verify_token(authorization)
+    validate_origin(request)
+
+    # Validate Accept header (client MUST include application/json and text/event-stream)
+    accept = request.headers.get("accept", "")
+    if "application/json" not in accept and "text/event-stream" not in accept and "*/*" not in accept:
+        raise HTTPException(status_code=406, detail="Accept header must include application/json and text/event-stream")
 
     try:
         body = await request.json()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+    # Validate JSON-RPC 2.0 envelope
+    if body.get("jsonrpc") != "2.0":
+        return JSONResponse(content={
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {"code": -32600, "message": "Invalid Request: missing or incorrect jsonrpc version, expected '2.0'"}
+        })
 
     method = body.get("method")
     request_id = body.get("id")
@@ -919,42 +1331,119 @@ async def mcp_endpoint(
 
     logger.info(f"Received MCP request: method={method}, id={request_id}")
 
-    session_id = None
+    # JSON-RPC notifications have no "id" field and expect no response
+    is_notification = request_id is None
 
-    if method == "initialize":
-        response = handle_initialize(request_id, params)
-        session_id = response.pop("_session_id", None)
-    elif method == "initialized":
-        response = {"jsonrpc": "2.0", "id": request_id, "result": {}}
-    elif method == "tools/list":
-        response = handle_tools_list(request_id)
-    elif method == "tools/call":
-        response = await handle_tools_call(request_id, params)
-    elif method == "resources/list":
-        response = handle_resources_list(request_id)
-    elif method == "resources/read":
-        response = await handle_resources_read(request_id, params)
-    elif method == "prompts/list":
-        response = handle_prompts_list(request_id)
-    elif method == "prompts/get":
-        response = handle_prompts_get(request_id, params)
-    elif method == "ping":
-        response = {"jsonrpc": "2.0", "id": request_id, "result": {}}
-    else:
+    # Validate MCP-Protocol-Version header on non-initialize requests
+    if method != "initialize":
+        validate_protocol_version_header(request)
+
+    # Validate session on non-initialize requests (SHOULD per spec)
+    if method != "initialize":
+        validate_session(request, require=False)
+
+    # Handle notifications (no response expected per JSON-RPC spec)
+    if method == "notifications/initialized":
+        logger.info("Client initialized notification received")
+        if is_notification:
+            return Response(status_code=202)
+        return JSONResponse(content={"jsonrpc": "2.0", "id": request_id, "result": {}})
+
+    if is_notification and method.startswith("notifications/"):
+        logger.info(f"Received notification: {method}")
+        return Response(status_code=202)
+
+    # Handle JSON-RPC responses from client (for server-initiated requests)
+    if "result" in body or "error" in body:
+        return Response(status_code=202)
+
+    session_id = None
+    response = None
+
+    try:
+        if method == "initialize":
+            response, session_id = handle_initialize(request_id, params)
+        elif method == "tools/list":
+            response = handle_tools_list(request_id)
+        elif method == "tools/call":
+            response = await handle_tools_call(request_id, params)
+        elif method == "resources/list":
+            response = handle_resources_list(request_id)
+        elif method == "resources/read":
+            response = await handle_resources_read(request_id, params)
+        elif method == "prompts/list":
+            response = handle_prompts_list(request_id)
+        elif method == "prompts/get":
+            response = handle_prompts_get(request_id, params)
+        elif method == "ping":
+            response = {"jsonrpc": "2.0", "id": request_id, "result": {}}
+        else:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"}
+            }
+    except Exception as e:
+        logger.error(f"Error handling MCP request: {str(e)}")
         response = {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"}
+            "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
         }
 
-    async def generate():
-        yield json.dumps(response).encode('utf-8')
+    # Ensure response is never None
+    if response is None:
+        logger.error(f"Response is None for method {method}")
+        response = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32603, "message": "Internal error: No response generated"}
+        }
 
     headers = {"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"}
     if session_id:
         headers["Mcp-Session-Id"] = session_id
 
-    return StreamingResponse(generate(), media_type="application/json", headers=headers)
+    return JSONResponse(content=response, headers=headers)
+
+
+@app.get("/mcp")
+async def mcp_get_endpoint(
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization")
+):
+    """MCP GET endpoint - for opening SSE streams (per MCP 2025-11-25 Streamable HTTP spec).
+    This server does not support server-initiated requests, so returns 405."""
+    await verify_token(authorization)
+    validate_origin(request)
+
+    # Accept header must include text/event-stream
+    accept = request.headers.get("accept", "")
+    if "text/event-stream" not in accept and "*/*" not in accept:
+        raise HTTPException(status_code=406, detail="Accept header must include text/event-stream")
+
+    # This server does not support server-to-client SSE streams
+    return Response(status_code=405, headers={"Allow": "POST, DELETE"})
+
+
+@app.delete("/mcp")
+async def mcp_delete_endpoint(
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization")
+):
+    """MCP DELETE endpoint - for client-initiated session termination (per MCP 2025-11-25 spec)"""
+    await verify_token(authorization)
+    validate_origin(request)
+
+    session_id = request.headers.get("mcp-session-id")
+    if session_id and session_id in sessions:
+        del sessions[session_id]
+        logger.info(f"Session terminated by client: {session_id}")
+        return Response(status_code=200)
+    elif session_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        raise HTTPException(status_code=400, detail="Missing MCP-Session-Id header")
 
 
 @app.get("/health")
@@ -984,8 +1473,8 @@ async def root():
         "mcp_endpoint": "/mcp",
         "health_endpoint": "/health",
         "tools": [
-            "pet_training_freeze", "pet_training_fast", "warning_buzzer", "pet_training",
-            "sleep_deprivation", "random_mode", "timer",
+            "device_config", "tilt", "pet_training_freeze", "pet_training_fast",
+            "warning_buzzer", "pet_training", "sleep_deprivation", "random_mode", "timer",
             "beep", "shock", "power_control", "send_raw_command"
         ]
     }
@@ -994,4 +1483,5 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.getenv("HOST", "127.0.0.1")
+    uvicorn.run(app, host=host, port=port)

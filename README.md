@@ -13,13 +13,15 @@ HTTP Streamable MCP (Model Context Protocol) server for controlling PowerExchang
 
 | Tool | Description |
 |------|-------------|
+| `device_config` | Check or save device configuration (SSID, password, serial, key) |
+| `tilt` | Check or save device tilt position value |
 | `pet_training_freeze` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode (S2Z) - must stay still |
 | `pet_training_fast` | PET TRAINING FAST - Activate Pet Training fast mode (S2F) - faster response |
 | `warning_buzzer` | Enable/disable the warning buzzer |
 | `pet_training` | Pet Training mode (normal/S2) |
 | `sleep_deprivation` | Sleep Deprivation mode |
 | `random_mode` | Random mode - random activation |
-| `timer` | Timer mode (on/off, t1_up/t1_down, t2_up/t2_down) |
+| `timer` | Timer mode (on/off, get, t1_up/t1_down, t2_up/t2_down) |
 | `beep` | Send a beep (short press equivalent) |
 | `shock` | Send a shock with power 1-100% (long press equivalent) |
 | `power_control` | Power level control |
@@ -96,6 +98,8 @@ Each tool has its own variable to customize its description:
 
 | Variable | Default Description |
 |----------|---------------------|
+| `TOOL_DESC_DEVICE_CONFIG` | Device Config - Check or save device configuration... |
+| `TOOL_DESC_TILT` | Tilt - Check or save the device tilt position value |
 | `TOOL_DESC_PET_TRAINING_FREEZE` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode... |
 | `TOOL_DESC_PET_TRAINING_FAST` | PET TRAINING FAST - Activate Pet Training fast mode... |
 | `TOOL_DESC_WARNING_BUZZER` | Warning Buzzer - Enable or disable the warning buzzer... |
@@ -175,6 +179,14 @@ curl -X POST http://192.168.1.100:8000/mcp \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "timer", "arguments": {"action": "on"}}}'
 ```
 
+#### Get Timer Values
+```bash
+curl -X POST http://192.168.1.100:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: your-token" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "timer", "arguments": {"action": "get"}}}'
+```
+
 #### Increase Timer 1
 ```bash
 curl -X POST http://192.168.1.100:8000/mcp \
@@ -187,6 +199,10 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Function | Endpoint |
 |----------|----------|
+| Device Config Check | `/TX?` |
+| Device Config Save | `/TX?SSIDX=<ssid>&PASSX=<password>` |
+| Tilt Check | `/DIS/BOW` |
+| Tilt Save | `/TX?TILTVAL=<value>` |
 | Pet Training Freeze ON | `/mode/S2Z` |
 | Pet Training Freeze OFF | `/mode/0` |
 | Pet Training Fast ON | `/mode/S2F` |
@@ -197,6 +213,7 @@ curl -X POST http://192.168.1.100:8000/mcp \
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |
+| Timer Get | `/DIS/TM` |
 | Timer 1 + | `/T1/+` |
 | Timer 1 - | `/T1/-` |
 | Timer 2 + | `/T2/+` |
@@ -236,6 +253,8 @@ docker run -d \
   -e DEVICE_PORT=80 \
   -e MCP_CONTEXT_DESCRIPTION="My Device" \
   -e MCP_SAFETY_MAX_POWER_0_100=50 \
+  -e TOOL_DESC_DEVICE_CONFIG="Device config" \
+  -e TOOL_DESC_TILT="Tilt" \
   -e TOOL_DESC_PET_TRAINING_FREEZE="Freeze training mode" \
   -e TOOL_DESC_PET_TRAINING_FAST="Fast training mode" \
   -e TOOL_DESC_WARNING_BUZZER="Warning buzzer" \
@@ -288,13 +307,15 @@ Serveur MCP (Model Context Protocol) HTTP Streamable pour contrôler les apparei
 
 | Outil | Description |
 |-------|-------------|
+| `device_config` | Vérifie ou sauvegarde la configuration du device (SSID, mot de passe, numéro de série, clé) |
+| `tilt` | Vérifie ou sauvegarde la valeur de position d'inclinaison du device |
 | `pet_training_freeze` | PET TRAINING FREEZE (BETA) - Active le mode Pet Training freeze (S2Z) - doit rester immobile |
 | `pet_training_fast` | PET TRAINING FAST - Active le mode Pet Training rapide (S2F) - réponse plus rapide |
 | `warning_buzzer` | Active/désactive le buzzer d'avertissement |
 | `pet_training` | Mode Pet Training (normal/S2) |
 | `sleep_deprivation` | Mode Sleep Deprivation |
 | `random_mode` | Mode Random - activation aléatoire |
-| `timer` | Mode Timer (on/off, t1_up/t1_down, t2_up/t2_down) |
+| `timer` | Mode Timer (on/off, get, t1_up/t1_down, t2_up/t2_down) |
 | `beep` | Envoie un bip (équivalent appui court) |
 | `shock` | Envoie un shock avec puissance 1-100% (équivalent appui long) |
 | `power_control` | Contrôle du niveau de puissance |
@@ -371,6 +392,8 @@ Chaque outil a sa propre variable pour personnaliser sa description :
 
 | Variable | Description par défaut |
 |----------|------------------------|
+| `TOOL_DESC_DEVICE_CONFIG` | Device Config - Check or save device configuration... |
+| `TOOL_DESC_TILT` | Tilt - Check or save the device tilt position value |
 | `TOOL_DESC_PET_TRAINING_FREEZE` | PET TRAINING FREEZE (BETA) - Activate Pet Training freeze mode... |
 | `TOOL_DESC_PET_TRAINING_FAST` | PET TRAINING FAST - Activate Pet Training fast mode... |
 | `TOOL_DESC_WARNING_BUZZER` | Warning Buzzer - Enable or disable the warning buzzer... |
@@ -450,6 +473,14 @@ curl -X POST http://192.168.1.100:8000/mcp \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "timer", "arguments": {"action": "on"}}}'
 ```
 
+#### Lire les valeurs Timer
+```bash
+curl -X POST http://192.168.1.100:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: votre-token" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "timer", "arguments": {"action": "get"}}}'
+```
+
 #### Augmenter Timer 1
 ```bash
 curl -X POST http://192.168.1.100:8000/mcp \
@@ -462,6 +493,10 @@ curl -X POST http://192.168.1.100:8000/mcp \
 
 | Fonction | Endpoint |
 |----------|----------|
+| Config Device (check) | `/TX?` |
+| Config Device (save) | `/TX?SSIDX=<ssid>&PASSX=<password>` |
+| Tilt (check) | `/DIS/BOW` |
+| Tilt (save) | `/TX?TILTVAL=<valeur>` |
 | Pet Training Freeze ON | `/mode/S2Z` |
 | Pet Training Freeze OFF | `/mode/0` |
 | Pet Training Fast ON | `/mode/S2F` |
@@ -472,6 +507,7 @@ curl -X POST http://192.168.1.100:8000/mcp \
 | Sleep Deprivation | `/mode/S4` |
 | Random | `/mode/RN` |
 | Timer Mode | `/mode/TM` |
+| Timer Get | `/DIS/TM` |
 | Timer 1 + | `/T1/+` |
 | Timer 1 - | `/T1/-` |
 | Timer 2 + | `/T2/+` |
@@ -511,6 +547,8 @@ docker run -d \
   -e DEVICE_PORT=80 \
   -e MCP_CONTEXT_DESCRIPTION="Mon Device" \
   -e MCP_SAFETY_MAX_POWER_0_100=50 \
+  -e TOOL_DESC_DEVICE_CONFIG="Configuration device" \
+  -e TOOL_DESC_TILT="Inclinaison" \
   -e TOOL_DESC_PET_TRAINING_FREEZE="Mode dressage freeze" \
   -e TOOL_DESC_PET_TRAINING_FAST="Mode dressage rapide" \
   -e TOOL_DESC_WARNING_BUZZER="Buzzer d'avertissement" \
